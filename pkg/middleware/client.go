@@ -10,8 +10,6 @@ import (
 	"time"
 )
 
-// Result mirrors internal/limiter.Result
-// duplicated here so pkg/ has zero dependency on internal/
 type Result struct {
 	Allowed    bool  `json:"allowed"`
 	Remaining  int   `json:"remaining"`

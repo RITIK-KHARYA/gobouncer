@@ -85,9 +85,9 @@ func RateLimit(client *Client, opts ...MiddlewareOption) func(http.Handler) http
 	// build config with sensible defaults
 	cfg := &config{
 		client:   client,
-		limit:    100,                      // 100 requests
+		limit:    100,                        // 100 requests
 		windowMs: time.Minute.Milliseconds(), // per minute
-		keyFunc:  IPKey,                    // by IP unless overridden
+		keyFunc:  IPKey,                      // by IP unless overridden
 	}
 
 	// apply caller options

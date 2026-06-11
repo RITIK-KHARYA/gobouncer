@@ -29,11 +29,11 @@ func NewGCRA(rdb *redis.Client) *GCRA {
 	return &GCRA{rdb: rdb}
 }
 
-func (g *GCRA) Check(ctx context.Context, key string, limit, windowMs int64) Result {
+func (g *GCRA) Check(ctx context.Context, key string, limit, window int64) Result {
 	now := time.Now().UnixMilli()
 
 	// How many ms each request slot occupies
-	emissionInterval := windowMs / limit
+	emissionInterval := window / limit
 
 	// Burst tolerance — how far behind TAT we still allow
 	// Allows up to limit-1 requests instantly before smoothing kicks in
@@ -67,14 +67,14 @@ func (g *GCRA) Check(ctx context.Context, key string, limit, windowMs int64) Res
 	}
 	newTAT += emissionInterval
 
-	// How many more requests fit before burst is exhausted
-	remaining := int64((burst - (newTAT - now)) / emissionInterval)
+	// How many more requests fit before burst is exhausted (rounded up division)
+	remaining := limit - (newTAT-now+emissionInterval-1)/emissionInterval
 	if remaining < 0 {
 		remaining = 0
 	}
 
 	// Persist new TAT to Redis with expiry
-	g.rdb.Set(ctx, tatKey, newTAT, time.Duration(windowMs)*time.Millisecond)
+	g.rdb.Set(ctx, tatKey, newTAT, time.Duration(window)*time.Millisecond)
 
 	return Result{Allowed: true, Remaining: remaining, RetryAfter: 0}
 }

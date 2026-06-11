@@ -1,4 +1,36 @@
-.config
-api.exe
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+gobouncer
+
+# Test binaries
+*.test
+
+# Output of go coverage
+*.out
+*.prof
+
+# Environment
 .env
-config
+.env.*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Vendor (if using go mod vendor)
+# vendor/
+
+# Build output
+/bin/
+/dist/

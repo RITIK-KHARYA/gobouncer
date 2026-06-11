@@ -3,16 +3,13 @@ package limiter
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
 
-type Result struct {
-	Allowed    bool  `json:"allowed"`
-	Remaining  int64 `json:"remaining"`
-	RetryAfter int64 `json:"retry_after,omitempty"`
-}
+var reqCounter uint64
 
 type SlidingWindow struct {
 	rdb *redis.Client
@@ -49,8 +46,9 @@ func (l *SlidingWindow) Check(ctx context.Context, key string, limit, window int
 	}
 
 	// Step 3: under limit — record the request
+	member := fmt.Sprintf("%d:%d:%d", now, time.Now().UnixNano(), atomic.AddUint64(&reqCounter, 1))
 	pipe2 := l.rdb.Pipeline()
-	pipe2.ZAdd(ctx, key, redis.Z{Score: float64(now), Member: now})
+	pipe2.ZAdd(ctx, key, redis.Z{Score: float64(now), Member: member})
 	pipe2.Expire(ctx, key, time.Duration(window)*time.Millisecond)
 	pipe2.Exec(ctx)
 

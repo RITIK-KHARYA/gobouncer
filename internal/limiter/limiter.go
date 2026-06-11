@@ -8,5 +8,6 @@ type Result struct {
 	RetryAfter int64 `json:"retry_after,omitempty"`
 }
 
-
-
+type Algorithm interface {
+	Check(ctx context.Context, key string, limit, window int64) Result
+}

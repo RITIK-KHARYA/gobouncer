@@ -3,8 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/ritik-kharya/gobouncer/config"
@@ -12,13 +16,20 @@ import (
 )
 
 func main() {
-	cfg := config.Load()
+	// Structured logger — JSON in prod, text for local dev
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+	slog.SetDefault(logger)
 
+	cfg := config.Load()
 	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
-	if err := rdb.Ping(context.Background()).Err(); err != nil {
-		log.Fatalf("cannot connect to redis: %v", err)
+	ctx := context.Background()
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		slog.Error("cannot connect to redis", "addr", cfg.RedisAddr, "error", err)
+		os.Exit(1)
 	}
-	log.Printf("Redis connected to %s", cfg.RedisAddr)
+	slog.Info("redis connected", "addr", cfg.RedisAddr)
 
 	var l limiter.Algorithm
 	if cfg.Algorithm == "gcra" {
@@ -26,16 +37,46 @@ func main() {
 	} else {
 		l = limiter.NewSlidingWindow(rdb)
 	}
-	log.Printf("Algorithm: %s", cfg.Algorithm)
+	slog.Info("algorithm selected", "algorithm", cfg.Algorithm)
 
-	http.HandleFunc("/check", makeCheckHandler(l))
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/check", makeCheckHandler(l))
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "OK")
 	})
 
-	log.Printf("Server running on port %s", cfg.ServerPort)
-	if err := http.ListenAndServe(cfg.ServerPort, nil); err != nil {
-		log.Fatalf("Server failed: %v", err)
+	srv := &http.Server{
+		Addr:         cfg.ServerPort,
+		Handler:      mux,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
-}
+
+	// Start server in a goroutine
+	go func() {
+		slog.Info("server starting", "port", cfg.ServerPort)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("server failed", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	// Graceful shutdown — wait for SIGINT or SIGTERM
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	sig := <-quit
+	slog.Info("shutdown signal received", "signal", sig)
+
+	// Give in-flight requests 10 seconds to complete
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("forced shutdown", "error", err)
+		os.Exit(1)
+	}
+
+	slog.Info("server stopped gracefully")
+}
