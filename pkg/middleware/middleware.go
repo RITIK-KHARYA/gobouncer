@@ -15,14 +15,6 @@ import (
 // e.g. "ip:1.2.3.4", "user:123", "apikey:abc"
 type KeyFunc func(r *http.Request) string
 
-// config holds all middleware configuration
-type config struct {
-	client   *Client
-	limit    int64
-	windowMs int64
-	keyFunc  KeyFunc
-}
-
 // MiddlewareOption configures the middleware
 // separate from ClientOption so both are clean
 type MiddlewareOption func(*config)

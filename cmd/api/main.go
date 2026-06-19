@@ -12,6 +12,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"github.com/ritik-kharya/gobouncer/config"
+	"github.com/ritik-kharya/gobouncer/internal/handlers"
 	"github.com/ritik-kharya/gobouncer/internal/limiter"
 )
 
@@ -30,17 +31,14 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("redis connected", "addr", cfg.RedisAddr)
-
-	var l limiter.Algorithm
-	if cfg.Algorithm == "gcra" {
-		l = limiter.NewGCRA(rdb)
-	} else {
-		l = limiter.NewSlidingWindow(rdb)
+	algos := handlers.Algorithms{
+		SlidingWindow: limiter.NewSlidingWindow(rdb),
+		GCRA:          limiter.NewGCRA(rdb),
 	}
-	slog.Info("algorithm selected", "algorithm", cfg.Algorithm)
+	slog.Info("algorithms ready", "default", "sliding_window")
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/check", makeCheckHandler(l))
+	mux.HandleFunc("/check", handlers.NewCheckHandler(algos))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "OK")
