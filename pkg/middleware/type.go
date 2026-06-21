@@ -5,14 +5,17 @@ import (
 )
 
 type Result struct {
-	Allowed    bool  `json:"allowed"`
-	Remaining  int   `json:"remaining"`
-	RetryAfter int64 `json:"retry_after,omitempty"`
+	Allowed    bool   `json:"allowed"`
+	Remaining  int    `json:"remaining"`
+	RetryAfter int64  `json:"retry_after,omitempty"`
+	Limit      int64  `json:"-"`
+	Policy     string `json:"-"`
 }
 
 // checkRequest is what we POST to /check
 type checkRequest struct {
 	Key      string `json:"key"`
+	Policy   string `json:"policy,omitempty"`
 	Limit    int64  `json:"limit"`
 	WindowMs int64  `json:"window_ms"`
 }
@@ -31,5 +34,6 @@ type config struct {
 	client   *Client
 	limit    int64
 	windowMs int64
+	policy   string
 	keyFunc  KeyFunc
 }

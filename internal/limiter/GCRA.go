@@ -2,6 +2,7 @@ package limiter
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -9,72 +10,120 @@ import (
 
 // GCRA (Generic Cell Rate Algorithm)
 //
-// Core idea: every key has a "theoretical arrival time" (TAT) stored in Redis.
-// TAT = the earliest moment the next request is allowed.
-//
-// On each request:
-//   - If now >= TAT → allowed, update TAT forward by one emission interval
-//   - If now < TAT  → denied, tell caller how long to wait
-//
-// emissionInterval = windowMs / limit
-// e.g. 100 req/min → 60000ms / 100 = 600ms per slot
-//
-// One string key per user in Redis. No sorted sets. Memory efficient.
-
+// Every key stores one Redis value: the theoretical arrival time (TAT).
+// The Redis script below checks admission and updates TAT atomically, so
+// concurrent requests cannot all read the same old TAT and over-admit.
 type GCRA struct {
-	rdb *redis.Client
+	rdb      *redis.Client
+	failOpen bool
 }
 
-func NewGCRA(rdb *redis.Client) *GCRA {
-	return &GCRA{rdb: rdb}
+type GCRAOption func(*GCRA)
+
+func WithGCRAFailOpen(open bool) GCRAOption {
+	return func(g *GCRA) {
+		g.failOpen = open
+	}
 }
+
+func NewGCRA(rdb *redis.Client, opts ...GCRAOption) *GCRA {
+	g := &GCRA{
+		rdb:      rdb,
+		failOpen: true,
+	}
+	for _, opt := range opts {
+		opt(g)
+	}
+	return g
+}
+
+var gcraScript = redis.NewScript(`
+local tat = redis.call("GET", KEYS[1])
+local now = tonumber(ARGV[1])
+local limit = tonumber(ARGV[2])
+local window = tonumber(ARGV[3])
+
+local emission = math.floor((window + limit - 1) / limit)
+if emission < 1 then
+	emission = 1
+end
+
+local burst = emission * (limit - 1)
+
+if not tat then
+	tat = now
+else
+	tat = tonumber(tat)
+end
+
+local allow_at = tat - burst
+if now < allow_at then
+	return {0, 0, allow_at - now}
+end
+
+local new_tat = tat
+if now > new_tat then
+	new_tat = now
+end
+new_tat = new_tat + emission
+
+redis.call("SET", KEYS[1], new_tat, "PX", window)
+
+local remaining = math.floor((now + burst - new_tat) / emission) + 1
+if remaining < 0 then
+	remaining = 0
+end
+
+return {1, remaining, 0}
+`)
 
 func (g *GCRA) Check(ctx context.Context, key string, limit, window int64) Result {
+	if limit <= 0 || window <= 0 {
+		return Result{Allowed: false, Remaining: 0}
+	}
+
 	now := time.Now().UnixMilli()
-
-	// How many ms each request slot occupies
-	emissionInterval := window / limit
-
-	// Burst tolerance — how far behind TAT we still allow
-	// Allows up to limit-1 requests instantly before smoothing kicks in
-	burst := emissionInterval * (limit - 1)
-
 	tatKey := "gcra:" + key
 
-	// Get current TAT from Redis
-	tat, err := g.rdb.Get(ctx, tatKey).Int64()
-	if err == redis.Nil {
-		// First ever request for this key
-		tat = now
-	} else if err != nil {
-		// Redis error — fail open so GoBouncer outage doesn't kill your app
+	values, err := gcraScript.Run(ctx, g.rdb, []string{tatKey}, now, limit, window).Slice()
+	if err != nil {
+		return g.onRedisError()
+	}
+	if len(values) != 3 {
+		return g.onRedisError()
+	}
+
+	allowed := parseScriptInt(values[0]) == 1
+	remaining := parseScriptInt(values[1])
+	retryAfter := parseScriptInt(values[2])
+
+	return Result{
+		Allowed:    allowed,
+		Remaining:  remaining,
+		RetryAfter: retryAfter,
+	}
+}
+
+func (g *GCRA) onRedisError() Result {
+	if g.failOpen {
 		return Result{Allowed: true, Remaining: 0, RetryAfter: 0}
 	}
+	return Result{Allowed: false, Remaining: 0, RetryAfter: 0}
+}
 
-	// The earliest TAT we still accept (burst tolerance window)
-	allowAt := tat - burst
-
-	if now < allowAt {
-		// Too early — deny and tell caller how long to wait
-		retryAfter := allowAt - now
-		return Result{Allowed: false, Remaining: 0, RetryAfter: retryAfter}
+func parseScriptInt(v any) int64 {
+	switch n := v.(type) {
+	case int64:
+		return n
+	case int:
+		return int64(n)
+	case string:
+		parsed, _ := strconv.ParseInt(n, 10, 64)
+		return parsed
+	case []byte:
+		parsed, _ := strconv.ParseInt(string(n), 10, 64)
+		return parsed
+	default:
+		return 0
 	}
-
-	// Allowed — push TAT forward by one emission interval
-	newTAT := tat
-	if now > tat {
-		newTAT = now
-	}
-	newTAT += emissionInterval
-
-	// How many more requests fit before burst is exhausted (rounded up division)
-	remaining := limit - (newTAT-now+emissionInterval-1)/emissionInterval
-	if remaining < 0 {
-		remaining = 0
-	}
-
-	// Persist new TAT to Redis with expiry
-	g.rdb.Set(ctx, tatKey, newTAT, time.Duration(window)*time.Millisecond)
-
-	return Result{Allowed: true, Remaining: remaining, RetryAfter: 0}
 }

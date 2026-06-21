@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -61,12 +62,27 @@ func NewClient(baseURL string, opts ...Option) *Client {
 // ctx carries the deadline from the incoming request — if the user
 // cancelled their request, we cancel the GoBouncer call too.
 func (c *Client) Check(ctx context.Context, key string, limit, windowMs int64) (Result, error) {
-	// build the request body
-	body, err := json.Marshal(checkRequest{
+	result, err := c.doCheck(ctx, checkRequest{
 		Key:      key,
 		Limit:    limit,
 		WindowMs: windowMs,
 	})
+	result.Limit = limit
+	return result, err
+}
+
+func (c *Client) CheckPolicy(ctx context.Context, key, policy string) (Result, error) {
+	result, err := c.doCheck(ctx, checkRequest{
+		Key:    key,
+		Policy: policy,
+	})
+	result.Policy = policy
+	return result, err
+}
+
+func (c *Client) doCheck(ctx context.Context, check checkRequest) (Result, error) {
+	// build the request body
+	body, err := json.Marshal(check)
 	if err != nil {
 		return c.onError(fmt.Errorf("gobouncer: marshal error: %w", err))
 	}
@@ -96,6 +112,14 @@ func (c *Client) Check(ctx context.Context, key string, limit, windowMs int64) (
 	var result Result
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return c.onError(fmt.Errorf("gobouncer: decode error: %w", err))
+	}
+	if limit := resp.Header.Get("X-RateLimit-Limit"); limit != "" {
+		if parsed, err := strconv.ParseInt(limit, 10, 64); err == nil {
+			result.Limit = parsed
+		}
+	}
+	if policy := resp.Header.Get("X-RateLimit-Policy"); policy != "" {
+		result.Policy = policy
 	}
 
 	return result, nil

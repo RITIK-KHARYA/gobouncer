@@ -2,6 +2,8 @@ package limiter_test
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -129,4 +131,101 @@ func TestGCRA_RemainingDecreases(t *testing.T) {
 		}
 		lastRemaining = result.Remaining
 	}
+}
+
+func TestGCRA_RemainingReflectsBurstSlots(t *testing.T) {
+	g, _ := setupGCRA(t)
+	ctx := context.Background()
+
+	limit := int64(5)
+	window := int64(60000)
+
+	for i := int64(0); i < limit; i++ {
+		result := g.Check(ctx, "user:burst-remaining", limit, window)
+		expected := limit - i - 1
+		if !result.Allowed {
+			t.Fatalf("request %d should be allowed", i+1)
+		}
+		if result.Remaining != expected {
+			t.Fatalf("request %d: expected remaining=%d, got %d", i+1, expected, result.Remaining)
+		}
+	}
+}
+
+func TestGCRA_ConcurrentBurst_AllowsOnlyLimit(t *testing.T) {
+	g, _ := setupGCRA(t)
+
+	allowed := runConcurrentGCRAChecks(t, g, "user:concurrent-burst", 20, 60000, 50)
+	if allowed != 20 {
+		t.Fatalf("expected exactly 20 allowed requests, got %d", allowed)
+	}
+}
+
+func TestGCRA_ConcurrentLoad_AllowsOnlyLimit(t *testing.T) {
+	g, _ := setupGCRA(t)
+
+	allowed := runConcurrentGCRAChecks(t, g, "user:concurrent-load", 20, 60000, 1000)
+	if allowed != 20 {
+		t.Fatalf("expected exactly 20 allowed requests, got %d", allowed)
+	}
+}
+
+func TestGCRA_RedisError_FailOpenAllows(t *testing.T) {
+	rdb := unreachableRedisClient()
+	g := limiter.NewGCRA(rdb, limiter.WithGCRAFailOpen(true))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	result := g.Check(ctx, "user:redis-down-open", 10, 60000)
+	if !result.Allowed {
+		t.Fatal("expected fail-open GCRA to allow when Redis is unavailable")
+	}
+}
+
+func TestGCRA_RedisError_FailClosedDenies(t *testing.T) {
+	rdb := unreachableRedisClient()
+	g := limiter.NewGCRA(rdb, limiter.WithGCRAFailOpen(false))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	result := g.Check(ctx, "user:redis-down-closed", 10, 60000)
+	if result.Allowed {
+		t.Fatal("expected fail-closed GCRA to deny when Redis is unavailable")
+	}
+}
+
+func runConcurrentGCRAChecks(t *testing.T, g *limiter.GCRA, key string, limit, window int64, count int) int64 {
+	t.Helper()
+
+	var allowed int64
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(count)
+
+	for i := 0; i < count; i++ {
+		go func() {
+			defer wg.Done()
+			<-start
+			result := g.Check(context.Background(), key, limit, window)
+			if result.Allowed {
+				atomic.AddInt64(&allowed, 1)
+			}
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+	return allowed
+}
+
+func unreachableRedisClient() *redis.Client {
+	return redis.NewClient(&redis.Options{
+		Addr:         "127.0.0.1:1",
+		DialTimeout:  10 * time.Millisecond,
+		ReadTimeout:  10 * time.Millisecond,
+		WriteTimeout: 10 * time.Millisecond,
+		MaxRetries:   0,
+	})
 }

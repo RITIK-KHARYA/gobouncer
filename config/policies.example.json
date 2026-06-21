@@ -1,0 +1,22 @@
+{
+  "policies": [
+    {
+      "name": "default",
+      "limit": 100,
+      "window_ms": 60000,
+      "algorithm": "sliding_window"
+    },
+    {
+      "name": "login",
+      "limit": 5,
+      "window_ms": 300000,
+      "algorithm": "gcra"
+    },
+    {
+      "name": "public-api",
+      "limit": 1000,
+      "window_ms": 86400000,
+      "algorithm": "gcra"
+    }
+  ]
+}

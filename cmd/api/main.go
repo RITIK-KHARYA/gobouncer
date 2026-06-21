@@ -14,6 +14,7 @@ import (
 	"github.com/ritik-kharya/gobouncer/config"
 	"github.com/ritik-kharya/gobouncer/internal/handlers"
 	"github.com/ritik-kharya/gobouncer/internal/limiter"
+	"github.com/ritik-kharya/gobouncer/internal/policy"
 )
 
 func main() {
@@ -33,12 +34,24 @@ func main() {
 	slog.Info("redis connected", "addr", cfg.RedisAddr)
 	algos := handlers.Algorithms{
 		SlidingWindow: limiter.NewSlidingWindow(rdb),
-		GCRA:          limiter.NewGCRA(rdb),
+		GCRA:          limiter.NewGCRA(rdb, limiter.WithGCRAFailOpen(cfg.FailOpen)),
 	}
 	slog.Info("algorithms ready", "default", "sliding_window")
 
+	policyStore := policy.DefaultStore()
+	if cfg.PolicyFile != "" {
+		loadedStore, err := policy.LoadFile(cfg.PolicyFile)
+		if err != nil {
+			slog.Error("cannot load policy file", "path", cfg.PolicyFile, "error", err)
+			os.Exit(1)
+		}
+		policyStore = loadedStore
+	}
+	slog.Info("policies loaded", "count", len(policyStore.List()))
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("/check", handlers.NewCheckHandler(algos))
+	mux.HandleFunc("/check", handlers.NewCheckHandler(algos, policyStore))
+	mux.HandleFunc("/policies", handlers.NewPoliciesHandler(policyStore))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "OK")

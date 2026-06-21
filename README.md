@@ -51,12 +51,49 @@ GoBouncer is a fast, scalable rate-limiting API service written in Go. It uses R
    REDIS_PASSWORD=
    REDIS_DB=0
    PORT=8080
+   POLICY_FILE=config/policies.example.json
+   FAIL_OPEN=true
    ```
 
 4. **Run the Application:**
    ```bash
    go run cmd/api/main.go
    ```
+
+## Policy-Based Rate Limits
+
+GoBouncer supports named policies so application code does not need to hardcode limits everywhere.
+
+Check a request with a named policy:
+
+```bash
+curl -X POST http://localhost:8080/check \
+  -H "Content-Type: application/json" \
+  -d '{"key":"user:123","policy":"login"}'
+```
+
+List available policies:
+
+```bash
+curl http://localhost:8080/policies
+```
+
+Policy file format:
+
+```json
+{
+  "policies": [
+    {
+      "name": "login",
+      "limit": 5,
+      "window_ms": 300000,
+      "algorithm": "gcra"
+    }
+  ]
+}
+```
+
+If `POLICY_FILE` is not set, GoBouncer starts with built-in policies: `default`, `login`, and `public-api`.
 
 ## Dependencies
 
