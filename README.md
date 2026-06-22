@@ -93,7 +93,38 @@ Policy file format:
 }
 ```
 
-If `POLICY_FILE` is not set, GoBouncer starts with built-in policies: `default`, `login`, and `public-api`.
+If `POLICY_FILE` is not set, GoBouncer starts with built-in policies: `default`, `ip-basic`, `login`, `login-route`, `public-api`, and `user-free`.
+
+## Multi-Dimensional Limits
+
+Use `checks` when one request must satisfy multiple limits, such as IP + user + route.
+
+```bash
+curl -X POST http://localhost:8080/check \
+  -H "Content-Type: application/json" \
+  -d '{
+    "checks": [
+      {"name":"ip","policy":"ip-basic","key":"ip:1.2.3.4"},
+      {"name":"user","policy":"user-free","key":"user:123"},
+      {"name":"login","policy":"login-route","key":"route:/login:user:123"}
+    ]
+  }'
+```
+
+Go middleware example:
+
+```go
+limited := gobouncer.RateLimit(client, gobouncer.WithCheckFunc(func(r *http.Request) []gobouncer.Check {
+    userID := r.Header.Get("X-User-ID")
+    return []gobouncer.Check{
+        gobouncer.PolicyCheck("ip", gobouncer.IPKey(r), "ip-basic"),
+        gobouncer.PolicyCheck("user", "user:"+userID, "user-free"),
+        gobouncer.PolicyCheck("login", "route:"+r.URL.Path+":user:"+userID, "login-route"),
+    }
+}))(handler)
+```
+
+The request is allowed only if every dimension is allowed.
 
 ## Dependencies
 

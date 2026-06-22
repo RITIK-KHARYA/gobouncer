@@ -14,6 +14,9 @@ import (
 // e.g. "ip:1.2.3.4", "user:123", "apikey:abc".
 type KeyFunc func(r *http.Request) string
 
+// CheckFunc builds one or more dimensions for a request.
+type CheckFunc func(r *http.Request) []Check
+
 // MiddlewareOption configures the middleware.
 type MiddlewareOption func(*config)
 
@@ -38,11 +41,22 @@ func WithPolicy(name string) MiddlewareOption {
 	}
 }
 
+// WithCheckFunc enables multi-dimensional limits such as IP + user + route.
+func WithCheckFunc(fn CheckFunc) MiddlewareOption {
+	return func(c *config) {
+		c.checkFunc = fn
+	}
+}
+
 // WithKeyFunc sets how the middleware identifies each caller.
 func WithKeyFunc(fn KeyFunc) MiddlewareOption {
 	return func(c *config) {
 		c.keyFunc = fn
 	}
+}
+
+func PolicyCheck(name, key, policy string) Check {
+	return Check{Name: name, Key: key, Policy: policy}
 }
 
 // IPKey extracts the client IP from the request.
@@ -82,6 +96,27 @@ func RateLimit(client *Client, opts ...MiddlewareOption) func(http.Handler) http
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if cfg.checkFunc != nil {
+				result, err := cfg.client.CheckMany(r.Context(), cfg.checkFunc(r))
+				if err != nil {
+					http.Error(w, "rate limiter unavailable", http.StatusServiceUnavailable)
+					return
+				}
+
+				setHeaders(w, 0, Result{
+					Allowed:    result.Allowed,
+					Remaining:  result.Remaining,
+					RetryAfter: result.RetryAfter,
+				})
+				if !result.Allowed {
+					writeDenied(w, Result{RetryAfter: result.RetryAfter})
+					return
+				}
+
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			key := cfg.keyFunc(r)
 
 			var (

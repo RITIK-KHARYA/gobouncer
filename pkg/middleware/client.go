@@ -80,6 +80,31 @@ func (c *Client) CheckPolicy(ctx context.Context, key, policy string) (Result, e
 	return result, err
 }
 
+func (c *Client) CheckMany(ctx context.Context, checks []Check) (MultiResult, error) {
+	body, err := json.Marshal(checkRequest{Checks: checks})
+	if err != nil {
+		return c.onMultiError(fmt.Errorf("gobouncer: marshal error: %w", err))
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/check", bytes.NewReader(body))
+	if err != nil {
+		return c.onMultiError(fmt.Errorf("gobouncer: build request error: %w", err))
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return c.onMultiError(fmt.Errorf("gobouncer: request failed: %w", err))
+	}
+	defer resp.Body.Close()
+
+	var result MultiResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return c.onMultiError(fmt.Errorf("gobouncer: decode error: %w", err))
+	}
+	return result, nil
+}
+
 func (c *Client) doCheck(ctx context.Context, check checkRequest) (Result, error) {
 	// build the request body
 	body, err := json.Marshal(check)
@@ -134,4 +159,11 @@ func (c *Client) onError(err error) (Result, error) {
 		return Result{Allowed: true, Remaining: -1}, nil
 	}
 	return Result{Allowed: false}, err
+}
+
+func (c *Client) onMultiError(err error) (MultiResult, error) {
+	if c.failOpen {
+		return MultiResult{Allowed: true, Remaining: -1}, nil
+	}
+	return MultiResult{Allowed: false}, err
 }

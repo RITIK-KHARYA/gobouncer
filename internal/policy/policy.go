@@ -52,8 +52,11 @@ func DefaultStore() *MemoryStore {
 func DefaultPolicies() []Policy {
 	return []Policy{
 		{Name: "default", Limit: 100, WindowMs: 60_000, Algorithm: AlgorithmSlidingWindow},
+		{Name: "ip-basic", Limit: 100, WindowMs: 60_000, Algorithm: AlgorithmGCRA},
 		{Name: "login", Limit: 5, WindowMs: 300_000, Algorithm: AlgorithmGCRA},
+		{Name: "login-route", Limit: 5, WindowMs: 300_000, Algorithm: AlgorithmGCRA},
 		{Name: "public-api", Limit: 1_000, WindowMs: 86_400_000, Algorithm: AlgorithmGCRA},
+		{Name: "user-free", Limit: 1_000, WindowMs: 86_400_000, Algorithm: AlgorithmGCRA},
 	}
 }
 

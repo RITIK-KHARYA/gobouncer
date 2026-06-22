@@ -12,12 +12,38 @@ type Result struct {
 	Policy     string `json:"-"`
 }
 
+type Check struct {
+	Name      string `json:"name,omitempty"`
+	Key       string `json:"key"`
+	Policy    string `json:"policy,omitempty"`
+	Limit     int64  `json:"limit,omitempty"`
+	WindowMs  int64  `json:"window_ms,omitempty"`
+	Algorithm string `json:"algorithm,omitempty"`
+}
+
+type CheckResult struct {
+	Name       string `json:"name,omitempty"`
+	Key        string `json:"key"`
+	Policy     string `json:"policy,omitempty"`
+	Allowed    bool   `json:"allowed"`
+	Remaining  int    `json:"remaining"`
+	RetryAfter int64  `json:"retry_after,omitempty"`
+}
+
+type MultiResult struct {
+	Allowed    bool          `json:"allowed"`
+	Remaining  int           `json:"remaining"`
+	RetryAfter int64         `json:"retry_after,omitempty"`
+	Checks     []CheckResult `json:"checks"`
+}
+
 // checkRequest is what we POST to /check
 type checkRequest struct {
-	Key      string `json:"key"`
-	Policy   string `json:"policy,omitempty"`
-	Limit    int64  `json:"limit"`
-	WindowMs int64  `json:"window_ms"`
+	Key      string  `json:"key"`
+	Policy   string  `json:"policy,omitempty"`
+	Limit    int64   `json:"limit"`
+	WindowMs int64   `json:"window_ms"`
+	Checks   []Check `json:"checks,omitempty"`
 }
 
 // Client is the GoBouncer HTTP client.
@@ -31,9 +57,10 @@ type Client struct {
 
 // config holds all middleware configuration
 type config struct {
-	client   *Client
-	limit    int64
-	windowMs int64
-	policy   string
-	keyFunc  KeyFunc
+	client    *Client
+	limit     int64
+	windowMs  int64
+	policy    string
+	keyFunc   KeyFunc
+	checkFunc CheckFunc
 }
