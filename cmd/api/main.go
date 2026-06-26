@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/ritik-kharya/gobouncer/config"
+	"github.com/ritik-kharya/gobouncer/internal/config"
 	"github.com/ritik-kharya/gobouncer/internal/handlers"
 	"github.com/ritik-kharya/gobouncer/internal/limiter"
 	"github.com/ritik-kharya/gobouncer/internal/policy"

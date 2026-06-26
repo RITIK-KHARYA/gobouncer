@@ -12,6 +12,8 @@ gobouncer
 # Output of go coverage
 *.out
 *.prof
+coverage
+coverage.html
 
 # Environment
 .env

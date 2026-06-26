@@ -1,4 +1,4 @@
-.PHONY: check build run test test-integration lint clean fmt vet
+.PHONY: check build run test test-integration lint clean fmt vet docker-build docker-up docker-down docker-logs
 
 # Binary name
 BINARY=gobouncer
@@ -43,6 +43,22 @@ lint: fmt vet
 clean:
 	go clean
 	rm -f $(BINARY) $(BINARY).exe coverage.out coverage.html
+
+## docker-build: Build docker images
+docker-build:
+	docker compose build
+
+## docker-up: Start docker containers in background
+docker-up:
+	docker compose up -d
+
+## docker-down: Stop docker containers
+docker-down:
+	docker compose down
+
+## docker-logs: Show docker logs
+docker-logs:
+	docker compose logs -f
 
 ## help: Show this help
 help:

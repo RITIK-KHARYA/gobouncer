@@ -60,6 +60,30 @@ GoBouncer is a fast, scalable rate-limiting API service written in Go. It uses R
    go run cmd/api/main.go
    ```
 
+## Running with Docker
+
+You can run both GoBouncer and Redis inside Docker containers using Docker Compose. This is the recommended way to run the service locally without manual setup.
+
+1. **Start all services:**
+   ```bash
+   docker compose up --build -d
+   ```
+   This command:
+   - Builds the GoBouncer application image.
+   - Starts a Redis container.
+   - Configures the GoBouncer application to connect to the Redis container using environment variables (`REDIS_ADDR=redis:6379`).
+   - Starts the GoBouncer API service on port `8080`.
+
+2. **Check logs:**
+   ```bash
+   docker compose logs -f
+   ```
+
+3. **Stop all services:**
+   ```bash
+   docker compose down
+   ```
+
 ## Policy-Based Rate Limits
 
 GoBouncer supports named policies so application code does not need to hardcode limits everywhere.
