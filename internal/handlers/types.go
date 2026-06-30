@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"time"
+
 	"github.com/ritik-kharya/gobouncer/internal/limiter"
 	"github.com/ritik-kharya/gobouncer/internal/policy"
 )
@@ -49,4 +51,8 @@ type Algorithms struct {
 type PolicyStore interface {
 	Get(name string) (policy.Policy, bool)
 	List() []policy.Policy
+}
+
+type MetricsRecorder interface {
+	ObserveCheck(policyName, algorithm, outcome string, duration time.Duration)
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/ritik-kharya/gobouncer/internal/config"
 	"github.com/ritik-kharya/gobouncer/internal/handlers"
 	"github.com/ritik-kharya/gobouncer/internal/limiter"
+	"github.com/ritik-kharya/gobouncer/internal/metrics"
 	"github.com/ritik-kharya/gobouncer/internal/policy"
 )
 
@@ -49,9 +50,12 @@ func main() {
 	}
 	slog.Info("policies loaded", "count", len(policyStore.List()))
 
+	metricsRegistry := metrics.NewRegistry()
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("/check", handlers.NewCheckHandler(algos, policyStore))
+	mux.HandleFunc("/check", handlers.NewCheckHandler(algos, policyStore, metricsRegistry))
 	mux.HandleFunc("/policies", handlers.NewPoliciesHandler(policyStore))
+	mux.HandleFunc("/metrics", metricsRegistry.Handler())
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "OK")

@@ -150,6 +150,25 @@ limited := gobouncer.RateLimit(client, gobouncer.WithCheckFunc(func(r *http.Requ
 
 The request is allowed only if every dimension is allowed.
 
+## Metrics
+
+GoBouncer exposes Prometheus-compatible metrics at:
+
+```bash
+curl http://localhost:8080/metrics
+```
+
+Current metrics:
+
+```text
+gobouncer_checks_total{policy="login",algorithm="gcra",outcome="allowed"} 42
+gobouncer_check_duration_seconds_bucket{policy="login",algorithm="gcra",outcome="allowed",le="0.005"} 42
+gobouncer_check_duration_seconds_sum{policy="login",algorithm="gcra",outcome="allowed"} 0.038
+gobouncer_check_duration_seconds_count{policy="login",algorithm="gcra",outcome="allowed"} 42
+```
+
+Labels are intentionally limited to `policy`, `algorithm`, and `outcome` to avoid high-cardinality metrics from user IDs, IPs, API keys, or routes.
+
 ## Dependencies
 
 - [go-redis/v9](https://github.com/redis/go-redis) - Redis client for Go

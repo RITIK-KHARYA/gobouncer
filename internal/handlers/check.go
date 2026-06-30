@@ -5,18 +5,19 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/ritik-kharya/gobouncer/internal/limiter"
+	"github.com/ritik-kharya/gobouncer/internal/policy"
 )
 
 // NewCheckHandler returns a handler that checks the rate limit using the selected algorithm.
-func NewCheckHandler(algos Algorithms, policies PolicyStore) http.HandlerFunc {
+func NewCheckHandler(algos Algorithms, policies PolicyStore, metrics MetricsRecorder) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-
 		var req CheckRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			slog.Error("failed to decode check request", "error", err)
@@ -25,7 +26,7 @@ func NewCheckHandler(algos Algorithms, policies PolicyStore) http.HandlerFunc {
 		}
 
 		if len(req.Checks) > 0 {
-			handleMultiCheck(w, r, algos, policies, req.Checks)
+			handleMultiCheck(w, r, algos, policies, metrics, req.Checks)
 			return
 		}
 
@@ -36,7 +37,7 @@ func NewCheckHandler(algos Algorithms, policies PolicyStore) http.HandlerFunc {
 			WindowMs:  req.WindowMs,
 			Algorithm: req.Algorithm,
 		}
-		resolved, result, ok := runCheck(w, r, algos, policies, check)
+		resolved, result, ok := runCheck(w, r, algos, policies, metrics, check)
 		if !ok {
 			return
 		}
@@ -58,7 +59,7 @@ func NewCheckHandler(algos Algorithms, policies PolicyStore) http.HandlerFunc {
 	}
 }
 
-func  handleMultiCheck(w http.ResponseWriter, r *http.Request, algos Algorithms, policies PolicyStore, checks []Check) {
+func handleMultiCheck(w http.ResponseWriter, r *http.Request, algos Algorithms, policies PolicyStore, metrics MetricsRecorder, checks []Check) {
 	response := MultiCheckResult{
 		Allowed:   true,
 		Remaining: -1,
@@ -66,7 +67,7 @@ func  handleMultiCheck(w http.ResponseWriter, r *http.Request, algos Algorithms,
 	}
 
 	for _, check := range checks {
-		resolved, result, ok := runCheck(w, r, algos, policies, check)
+		resolved, result, ok := runCheck(w, r, algos, policies, metrics, check)
 		if !ok {
 			return
 		}
@@ -103,7 +104,7 @@ func  handleMultiCheck(w http.ResponseWriter, r *http.Request, algos Algorithms,
 	}
 }
 
-func runCheck(w http.ResponseWriter, r *http.Request, algos Algorithms, policies PolicyStore, check Check) (Check, limiter.Result, bool) {
+func runCheck(w http.ResponseWriter, r *http.Request, algos Algorithms, policies PolicyStore, metrics MetricsRecorder, check Check) (Check, limiter.Result, bool) {
 	if check.Key == "" {
 		http.Error(w, "Missing key", http.StatusBadRequest)
 		return Check{}, limiter.Result{}, false
@@ -130,6 +131,7 @@ func runCheck(w http.ResponseWriter, r *http.Request, algos Algorithms, policies
 		return Check{}, limiter.Result{}, false
 	}
 
+	resolved.Algorithm = normalizeAlgorithm(resolved.Algorithm)
 	algo := selectAlgorithm(algos, resolved.Algorithm)
 	if algo == nil {
 		slog.Error("requested algorithm is not initialized", "algo", resolved.Algorithm)
@@ -137,19 +139,44 @@ func runCheck(w http.ResponseWriter, r *http.Request, algos Algorithms, policies
 		return Check{}, limiter.Result{}, false
 	}
 
-	return resolved, algo.Check(r.Context(), resolved.Key, resolved.Limit, resolved.WindowMs), true
+	start := time.Now()
+	result := algo.Check(r.Context(), resolved.Key, resolved.Limit, resolved.WindowMs)
+	observeCheck(metrics, resolved, result, time.Since(start))
+	return resolved, result, true
 }
 
 func selectAlgorithm(algos Algorithms, algorithm string) limiter.Algorithm {
 	switch algorithm {
-	case "gcra":
+	case policy.AlgorithmGCRA:
 		return algos.GCRA
-	case "sliding_window", "":
+	case policy.AlgorithmSlidingWindow:
 		return algos.SlidingWindow
 	default:
 		slog.Warn("unknown algorithm requested, falling back to sliding window", "algo", algorithm)
 		return algos.SlidingWindow
 	}
+}
+
+func normalizeAlgorithm(algorithm string) string {
+	switch algorithm {
+	case policy.AlgorithmGCRA:
+		return policy.AlgorithmGCRA
+	case "", policy.AlgorithmSlidingWindow:
+		return policy.AlgorithmSlidingWindow
+	default:
+		return policy.AlgorithmSlidingWindow
+	}
+}
+
+func observeCheck(metrics MetricsRecorder, check Check, result limiter.Result, duration time.Duration) {
+	if metrics == nil {
+		return
+	}
+	outcome := "allowed"
+	if !result.Allowed {
+		outcome = "denied"
+	}
+	metrics.ObserveCheck(check.Policy, check.Algorithm, outcome, duration)
 }
 
 func retryAfterSeconds(ms int64) string {

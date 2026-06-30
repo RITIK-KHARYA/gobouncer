@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/ritik-kharya/gobouncer/internal/limiter"
+	"github.com/ritik-kharya/gobouncer/internal/metrics"
 	"github.com/ritik-kharya/gobouncer/internal/policy"
 )
 
@@ -52,7 +54,7 @@ func testPolicies(t *testing.T) *policy.MemoryStore {
 func TestCheckHandler_PolicyRequestUsesPolicySettings(t *testing.T) {
 	sliding := &stubAlgorithm{result: limiter.Result{Allowed: true, Remaining: 99}}
 	gcra := &stubAlgorithm{result: limiter.Result{Allowed: true, Remaining: 4}}
-	handler := NewCheckHandler(Algorithms{SlidingWindow: sliding, GCRA: gcra}, testPolicies(t))
+	handler := NewCheckHandler(Algorithms{SlidingWindow: sliding, GCRA: gcra}, testPolicies(t), nil)
 
 	body := bytes.NewBufferString(`{"key":"user:123","policy":"login"}`)
 	req := httptest.NewRequest(http.MethodPost, "/check", body)
@@ -82,7 +84,7 @@ func TestCheckHandler_PolicyRequestUsesPolicySettings(t *testing.T) {
 
 func TestCheckHandler_RawLimitRequestStillWorks(t *testing.T) {
 	sliding := &stubAlgorithm{result: limiter.Result{Allowed: true, Remaining: 9}}
-	handler := NewCheckHandler(Algorithms{SlidingWindow: sliding}, testPolicies(t))
+	handler := NewCheckHandler(Algorithms{SlidingWindow: sliding}, testPolicies(t), nil)
 
 	body := bytes.NewBufferString(`{"key":"ip:127.0.0.1","limit":10,"window_ms":60000}`)
 	req := httptest.NewRequest(http.MethodPost, "/check", body)
@@ -102,7 +104,7 @@ func TestCheckHandler_RawLimitRequestStillWorks(t *testing.T) {
 }
 
 func TestCheckHandler_UnknownPolicyReturnsNotFound(t *testing.T) {
-	handler := NewCheckHandler(Algorithms{SlidingWindow: &stubAlgorithm{}}, testPolicies(t))
+	handler := NewCheckHandler(Algorithms{SlidingWindow: &stubAlgorithm{}}, testPolicies(t), nil)
 
 	body := bytes.NewBufferString(`{"key":"user:123","policy":"missing"}`)
 	req := httptest.NewRequest(http.MethodPost, "/check", body)
@@ -115,9 +117,31 @@ func TestCheckHandler_UnknownPolicyReturnsNotFound(t *testing.T) {
 	}
 }
 
+func TestCheckHandler_RecordsMetrics(t *testing.T) {
+	registry := metrics.NewRegistry()
+	gcra := &stubAlgorithm{result: limiter.Result{Allowed: true, Remaining: 4}}
+	handler := NewCheckHandler(Algorithms{GCRA: gcra}, testPolicies(t), registry)
+
+	body := bytes.NewBufferString(`{"key":"user:123","policy":"login"}`)
+	req := httptest.NewRequest(http.MethodPost, "/check", body)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	output := registry.Render()
+	expected := `gobouncer_checks_total{policy="login",algorithm="gcra",outcome="allowed"} 1`
+	if !strings.Contains(output, expected) {
+		t.Fatalf("expected metrics output to contain %q, got:\n%s", expected, output)
+	}
+}
+
 func TestCheckHandler_MultiCheckRequiresAllDimensions(t *testing.T) {
 	gcra := &stubAlgorithm{result: limiter.Result{Allowed: true, Remaining: 4}}
-	handler := NewCheckHandler(Algorithms{GCRA: gcra}, testPolicies(t))
+	handler := NewCheckHandler(Algorithms{GCRA: gcra}, testPolicies(t), nil)
 
 	body := bytes.NewBufferString(`{"checks":[{"name":"ip","key":"ip:127.0.0.1","policy":"ip-basic"},{"name":"user","key":"user:123","policy":"user-free"}]}`)
 	req := httptest.NewRequest(http.MethodPost, "/check", body)
@@ -152,7 +176,7 @@ func TestCheckHandler_MultiCheckRequiresAllDimensions(t *testing.T) {
 
 func TestCheckHandler_MultiCheckDeniesWhenAnyDimensionDenies(t *testing.T) {
 	gcra := &stubAlgorithm{result: limiter.Result{Allowed: false, Remaining: 0, RetryAfter: 1500}}
-	handler := NewCheckHandler(Algorithms{GCRA: gcra}, testPolicies(t))
+	handler := NewCheckHandler(Algorithms{GCRA: gcra}, testPolicies(t), nil)
 
 	body := bytes.NewBufferString(`{"checks":[{"name":"login","key":"route:/login:user:123","policy":"login"},{"name":"user","key":"user:123","policy":"user-free"}]}`)
 	req := httptest.NewRequest(http.MethodPost, "/check", body)
